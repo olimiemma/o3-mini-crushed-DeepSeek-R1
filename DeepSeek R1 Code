@@ -1,0 +1,126 @@
+import pygame
+import numpy as np
+import math
+
+# Initialize Pygame
+pygame.init()
+WIDTH, HEIGHT = 800, 800
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+clock = pygame.time.Clock()
+FPS = 100  # Match with physics time step
+
+# Simulation parameters
+SCALE = 80  # pixels per simulation unit
+radius_hexagon = 5.0
+ball_radius = 0.2
+angular_velocity = np.pi / 2  # rad/s
+gravity = 9.81  # m/s²
+coefficient_of_restitution = 0.8
+friction_coefficient = 0.3
+dt = 1.0 / FPS  # Time step matches frame rate
+
+# Initialize ball state
+ball_pos = np.array([0.0, 3.0])
+ball_vel = np.array([3.0, 0.0])
+
+# Create hexagon vertices (unrotated)
+angles = np.linspace(0, 2*np.pi, 7)[:-1]
+original_vertices = radius_hexagon * np.column_stack([np.cos(angles), np.sin(angles)])
+current_angle = 0.0
+
+def get_rotated_vertices(angle):
+    """Return vertices rotated by given angle"""
+    rot_mat = np.array([[np.cos(angle), -np.sin(angle)],
+                        [np.sin(angle), np.cos(angle)]])
+    return original_vertices @ rot_mat
+
+def screen_pos(pos):
+    """Convert simulation coordinates to Pygame screen coordinates"""
+    return (WIDTH//2 + int(pos[0] * SCALE), 
+            HEIGHT//2 - int(pos[1] * SCALE))
+
+# Colors
+BG_COLOR = (30, 30, 30)
+HEX_COLOR = (100, 150, 255)
+BALL_COLOR = (255, 50, 50)
+
+running = True
+while running:
+    # Handle events
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+
+    # Update hexagon rotation
+    current_angle += angular_velocity * dt
+    if current_angle > 2*np.pi:
+        current_angle -= 2*np.pi
+    r_vertices = get_rotated_vertices(current_angle)
+
+    # Apply gravity
+    ball_vel[1] -= gravity * dt  # Gravity acts downward in simulation
+
+    # Save previous position and update ball
+    prev_pos = np.copy(ball_pos)
+    ball_pos += ball_vel * dt
+
+    # Collision detection and response
+    collision_occurred = False
+    for i in range(len(r_vertices)):
+        A = r_vertices[i]
+        B = r_vertices[(i+1)%len(r_vertices)]
+        
+        edge_vec = B - A
+        normal = np.array([-edge_vec[1], edge_vec[0]])
+        normal /= np.linalg.norm(normal)
+        
+        # Find closest point on edge
+        AB = B - A
+        AP = prev_pos - A
+        t = np.dot(AP, AB) / np.dot(AB, AB)
+        t = np.clip(t, 0.0, 1.0)
+        closest_point = A + t * AB
+        
+        # Check collision
+        dist_vec = prev_pos - closest_point
+        distance = np.linalg.norm(dist_vec)
+        
+        if distance < ball_radius:
+            # Calculate wall velocity at collision point
+            wall_vel = angular_velocity * np.array([-closest_point[1], closest_point[0]])
+            
+            # Calculate relative velocity
+            rel_vel = ball_vel - wall_vel
+            normal_vel = np.dot(rel_vel, normal) * normal
+            tangent_vel = rel_vel - normal_vel
+            
+            # Apply collision response
+            new_normal_vel = -coefficient_of_restitution * normal_vel
+            new_tangent_vel = (1 - friction_coefficient) * tangent_vel
+            new_rel_vel = new_normal_vel + new_tangent_vel
+            
+            # Update ball velocity
+            ball_vel = wall_vel + new_rel_vel
+            
+            # Position correction
+            penetration = ball_radius - distance
+            ball_pos = prev_pos + penetration * normal
+            
+            collision_occurred = True
+            break
+
+    # Draw everything
+    screen.fill(BG_COLOR)
+    
+    # Draw hexagon
+    hex_points = [screen_pos(v) for v in r_vertices]
+    pygame.draw.polygon(screen, HEX_COLOR, hex_points, 3)
+    
+    # Draw ball
+    ball_scr_pos = screen_pos(ball_pos)
+    pygame.draw.circle(screen, BALL_COLOR, ball_scr_pos, int(ball_radius * SCALE))
+    
+    pygame.display.flip()
+    clock.tick(FPS)
+
+pygame.quit()
